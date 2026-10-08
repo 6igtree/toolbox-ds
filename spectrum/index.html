@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Toolbox — Spectrum 2</title>
+    <!-- TextArea の UNSAFE_style は外枠に付くので、等幅指定はここで行う -->
+    <!-- page.css は OS のダークモードに従う。他の UI と揃えてライト固定（:where より詳細度が高いので上書きできる） -->
+    <style>:root { --s2-color-scheme: light; } body { margin: 0; } textarea { font-family: ui-monospace, Menlo, Consolas, monospace !important; }
+      .side { flex: 0 0 220px; min-height: calc(100vh - 57px); box-sizing: border-box; }
+      @media (max-width: 768px) { .side { flex-basis: 100%; min-height: 0; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/spectrum/main.tsx"></script>
+  </body>
+</html>

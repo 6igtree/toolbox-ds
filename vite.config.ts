@@ -1,7 +1,8 @@
 import { defineConfig, type Connect } from 'vite';
 import react from '@vitejs/plugin-react';
+import { UIS as UI_LIST } from './src/shared/uis.ts';
 
-const UIS = ['cloudscape', 'primer', 'semi'];
+const UIS: string[] = UI_LIST.map((u) => u.id);
 
 // /<ui>/<tool> を各 UI の HTML に向ける（本番は vercel.json の rewrites が同じことをする）
 const rewrite: Connect.NextHandleFunction = (req, _res, next) => {

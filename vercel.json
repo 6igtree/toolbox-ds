@@ -1,4 +1,4 @@
 {
   "trailingSlash": false,
-  "rewrites": [{ "source": "/:ui(cloudscape|primer|semi)/:tool*", "destination": "/:ui/index.html" }]
+  "rewrites": [{ "source": "/:ui(cloudscape|primer|semi|fluent|antd|spectrum|amplify|arco)/:tool*", "destination": "/:ui/index.html" }]
 }

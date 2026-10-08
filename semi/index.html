@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Toolbox — Semi Design</title>
+    <!-- Semi の既定は中国語フォント（PingFang SC）が先で、漢字が簡体字の字形になる。部品ごとに font-family を持つので、
+         見出し（.semi-typography-h3.semi-typography で 0,2,0）より強いセレクタで日本語フォントを先に置く。等幅の指定（0,2,0）は残る -->
+    <style>body, html body [class*="semi-"], html body .semi-typography[class*="semi-typography-"] { font-family: Inter, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, -apple-system, BlinkMacSystemFont, sans-serif; }</style>
     <!-- TextArea の style は外枠に付くので、中の textarea の等幅指定はここで行う -->
     <style>.semi-input-textarea-wrapper .semi-input-textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }</style>
   </head>

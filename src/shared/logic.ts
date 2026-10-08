@@ -159,3 +159,224 @@ export function decodeUrl(input: string, plusAsSpace: boolean): Result<string> {
     return { ok: false, error: '不正なパーセントエンコードが含まれています（% の後に 16 進数 2 桁が必要です）' };
   }
 }
+
+// ---------- 正規表現 ----------
+
+export type RegexSettings = { pattern: string; flags: string };
+export type RegexMatch = { index: number; text: string; groups: { name: string; value: string | undefined }[] };
+export type RegexOutput = { matches: RegexMatch[]; segments: { text: string; match: boolean }[]; truncated: boolean };
+
+export const REGEX_FLAGS = [
+  { flag: 'g', label: 'すべて（g）' },
+  { flag: 'i', label: '大文字小文字を無視（i）' },
+  { flag: 'm', label: '複数行（m）' },
+  { flag: 's', label: '. が改行に一致（s）' },
+  { flag: 'u', label: 'Unicode（u）' },
+] as const;
+
+const MAX_MATCHES = 1000;
+
+// ponytail: 正規表現はメインスレッドで実行する。破滅的バックトラックでタブが固まりうる。困ったら Worker + タイムアウトに移す
+export function testRegex(text: string, s: RegexSettings): Result<RegexOutput> {
+  let re: RegExp;
+  try {
+    re = new RegExp(s.pattern, s.flags.includes('g') ? s.flags : s.flags + 'g');
+  } catch (e) {
+    return { ok: false, error: `正規表現が不正です: ${(e as Error).message.replace(/^Invalid regular expression: /, '')}` };
+  }
+  const matches: RegexMatch[] = [];
+  for (const m of text.matchAll(re)) {
+    const named = m.groups ? Object.keys(m.groups) : [];
+    matches.push({
+      index: m.index,
+      text: m[0],
+      groups: m.slice(1).map((value, i) => ({ name: named[i] ?? String(i + 1), value })),
+    });
+    if (matches.length === MAX_MATCHES || !s.flags.includes('g')) break;
+  }
+  const segments: RegexOutput['segments'] = [];
+  let pos = 0;
+  for (const m of matches) {
+    if (m.text === '') continue; // 空一致は強調しようがないので一覧にだけ出す
+    if (m.index > pos) segments.push({ text: text.slice(pos, m.index), match: false });
+    segments.push({ text: m.text, match: true });
+    pos = m.index + m.text.length;
+  }
+  if (pos < text.length) segments.push({ text: text.slice(pos), match: false });
+  return { ok: true, value: { matches, segments, truncated: matches.length === MAX_MATCHES } };
+}
+
+// ---------- CSV ↔ JSON ----------
+
+export type CsvSettings = { mode: 'csv2json' | 'json2csv'; delimiter: ',' | '\t' | ';'; header: boolean };
+export type Grid = { columns: string[]; rows: string[][] };
+export type CsvOutput = { text: string; grid: Grid };
+
+// RFC 4180: "" で囲めば区切り文字・改行・"" を含められる
+export function parseCsv(text: string, delimiter: string): Result<string[][]> {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"' && field === '') quoted = true;
+    else if (c === delimiter) { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); rows.push(row); row = []; field = '';
+    } else field += c;
+  }
+  if (quoted) return { ok: false, error: '閉じていない " があります' };
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return { ok: true, value: rows };
+}
+
+const cell = (v: unknown) => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+
+export function convertCsv(input: string, s: CsvSettings): Result<CsvOutput> {
+  if (s.mode === 'csv2json') {
+    const parsed = parseCsv(input, s.delimiter);
+    if (!parsed.ok) return parsed;
+    const rows = parsed.value;
+    const width = rows.reduce((w, r) => Math.max(w, r.length), 0); // spread だと数十万行でスタックが溢れる
+    const columns = s.header ? rows[0].map((h, i) => h || `列${i + 1}`) : Array.from({ length: width }, (_, i) => `列${i + 1}`);
+    const body = s.header ? rows.slice(1) : rows;
+    const data = s.header ? body.map((r) => Object.fromEntries(columns.map((c, i) => [c, r[i] ?? '']))) : body;
+    return { ok: true, value: { text: JSON.stringify(data, null, 2), grid: { columns, rows: body.map((r) => columns.map((_, i) => r[i] ?? '')) } } };
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(input);
+  } catch (e) {
+    return { ok: false, error: `JSON として解釈できません: ${(e as Error).message}` };
+  }
+  if (!Array.isArray(data) || data.length === 0) return { ok: false, error: '1 件以上の要素を持つ配列を入力してください（例: [{"name": "a"}]）' };
+  const objects = data.every((d) => d !== null && typeof d === 'object' && !Array.isArray(d));
+  const columns = objects
+    ? [...new Set(data.flatMap((d) => Object.keys(d)))]
+    : Array.from({ length: data.reduce((w: number, d) => Math.max(w, Array.isArray(d) ? d.length : 1), 0) }, (_, i) => `列${i + 1}`);
+  const rows = data.map((d) => (objects ? columns.map((c) => cell(d[c])) : Array.isArray(d) ? columns.map((_, i) => cell(d[i])) : [cell(d)]));
+  const quote = (v: string) => (/[",\r\n]/.test(v) || v.includes(s.delimiter) ? `"${v.replaceAll('"', '""')}"` : v);
+  const lines = [...(s.header ? [columns] : []), ...rows].map((r) => r.map(quote).join(s.delimiter));
+  return { ok: true, value: { text: lines.join('\n'), grid: { columns, rows } } };
+}
+
+// ---------- Base64 ----------
+
+export type Base64Settings = { mode: 'encode' | 'decode'; urlSafe: boolean };
+
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+
+export function base64ToBytes(text: string): Uint8Array | null {
+  const t = text.replace(/\s+/g, '').replaceAll('-', '+').replaceAll('_', '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(t) || t.replace(/=+$/, '').length % 4 === 1) return null;
+  try {
+    return Uint8Array.from(atob(t.padEnd(Math.ceil(t.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+export function convertBase64(input: string, s: Base64Settings): Result<string> {
+  if (s.mode === 'encode') {
+    const b64 = bytesToBase64(new TextEncoder().encode(input));
+    return { ok: true, value: s.urlSafe ? b64.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '') : b64 };
+  }
+  const bytes = base64ToBytes(input);
+  if (!bytes) return { ok: false, error: 'Base64 として解釈できません（使える文字は A–Z a–z 0–9 + / と末尾の =。URL-safe の - _ も可）' };
+  try {
+    return { ok: true, value: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+  } catch {
+    return { ok: false, error: `UTF-8 の文字列ではありません（${bytes.length} バイトのバイナリデータの可能性があります）` };
+  }
+}
+
+// ---------- JWT ----------
+
+export type JwtTime = { claim: 'exp' | 'iat' | 'nbf'; label: string; local: string; relative: string };
+export type JwtOutput = {
+  header: string;
+  payload: string;
+  times: JwtTime[];
+  status: 'valid' | 'expired' | 'notYet' | 'noExp';
+};
+
+const CLAIM_LABEL = { exp: '有効期限（exp）', nbf: '有効開始（nbf）', iat: '発行日時（iat）' } as const;
+
+export function relativeTime(ms: number, now: number): string {
+  const rtf = new Intl.RelativeTimeFormat('ja', { numeric: 'auto' });
+  const sec = Math.round((ms - now) / 1000);
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]];
+  for (const [unit, size] of units) if (Math.abs(sec) >= size) return rtf.format(Math.trunc(sec / size), unit);
+  return rtf.format(sec, 'second');
+}
+
+// 署名は検証しない（鍵がないとできない）。中身を読むだけ
+export function decodeJwt(input: string, timeZone: string, now = Date.now()): Result<JwtOutput> {
+  const parts = input.trim().replace(/^Bearer\s+/i, '').split('.');
+  if (parts.length !== 3) return { ok: false, error: `JWT は「.」で区切られた 3 つの部分からなります（今は ${parts.length} つ）` };
+  const part = (i: number, name: string): Result<Record<string, unknown>> => {
+    const bytes = base64ToBytes(parts[i]);
+    if (!bytes) return { ok: false, error: `${name}が Base64URL として解釈できません` };
+    try {
+      const v = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+      if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new Error();
+      return { ok: true, value: v };
+    } catch {
+      return { ok: false, error: `${name}が JSON オブジェクトではありません` };
+    }
+  };
+  const header = part(0, 'ヘッダー');
+  if (!header.ok) return header;
+  const payload = part(1, 'ペイロード');
+  if (!payload.ok) return payload;
+  const times: JwtTime[] = [];
+  for (const claim of ['exp', 'nbf', 'iat'] as const) {
+    const v = payload.value[claim];
+    if (typeof v !== 'number' || !Number.isFinite(v) || Math.abs(v * 1000) > MAX_MS) continue;
+    times.push({ claim, label: CLAIM_LABEL[claim], local: formatInZone(v * 1000, timeZone), relative: relativeTime(v * 1000, now) });
+  }
+  const exp = payload.value.exp, nbf = payload.value.nbf;
+  const status = typeof nbf === 'number' && nbf * 1000 > now ? 'notYet'
+    : typeof exp !== 'number' ? 'noExp'
+    : exp * 1000 <= now ? 'expired' : 'valid';
+  return { ok: true, value: { header: JSON.stringify(header.value, null, 2), payload: JSON.stringify(payload.value, null, 2), times, status } };
+}
+
+export const JWT_STATUS = {
+  valid: { label: '有効期限内', tone: 'success' },
+  expired: { label: '期限切れ', tone: 'error' },
+  notYet: { label: 'まだ有効になっていません（nbf より前）', tone: 'warning' },
+  noExp: { label: '有効期限（exp）がありません', tone: 'info' },
+} as const;
+
+// ---------- 文字数カウント ----------
+
+export type CountItem = { label: string; value: number; hint?: string };
+
+// ponytail: 全角／半角は「ASCII と半角カナ以外は全角」の近似。East Asian Width の曖昧幅（Ambiguous）は区別しない
+export function countText(text: string): CountItem[] {
+  const graphemes = [...new Intl.Segmenter('ja', { granularity: 'grapheme' }).segment(text)].map((g) => g.segment);
+  // 全角・半角は見た目の 1 文字単位で数える（ZWJ でつないだ絵文字を 1 文字にするため）
+  const half = graphemes.filter((g) => /^[\x20-\x7e｡-ﾟ]/.test(g)).length;
+  const control = graphemes.filter((g) => /^[\x00-\x1f\x7f]/.test(g)).length;
+  return [
+    { label: '文字数', value: graphemes.length, hint: '見た目の 1 文字を 1 と数える（絵文字の組み合わせも 1）' },
+    { label: '空白・改行を除く文字数', value: graphemes.filter((g) => !/^\s+$/.test(g)).length },
+    { label: '行数', value: text === '' ? 0 : text.split(/\r\n|\r|\n/).length },
+    { label: 'UTF-8 のバイト数', value: new TextEncoder().encode(text).length },
+    { label: 'UTF-16 の長さ', value: text.length, hint: 'JavaScript の length。DB やフォームの上限でよく使われる' },
+    { label: 'コードポイント数', value: [...text].length },
+    { label: '全角文字', value: graphemes.length - half - control },
+    { label: '半角文字', value: half },
+  ];
+}

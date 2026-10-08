@@ -9,13 +9,20 @@
     "check": "node src/shared/logic.check.ts && tsc --noEmit"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.3.4",
+    "@arco-design/web-react": "^2.66.16",
+    "@aws-amplify/ui-react": "^6.15.7",
     "@cloudscape-design/components": "^3.0.1393",
     "@cloudscape-design/global-styles": "^1.0.71",
     "@douyinfe/semi-icons": "2.103.0",
     "@douyinfe/semi-ui-19": "^2.103.0",
+    "@fluentui/react-components": "^9.74.9",
+    "@fluentui/react-icons": "^2.0.343",
     "@primer/octicons-react": "19.40.0",
     "@primer/primitives": "^11.10.0",
     "@primer/react": "^38.40.1",
+    "@react-spectrum/s2": "^1.7.1",
+    "antd": "^6.6.5",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-is": "19.2.0"

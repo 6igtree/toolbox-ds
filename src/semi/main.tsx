@@ -2,18 +2,20 @@ import '@douyinfe/semi-ui-19/react19-adapter';
 import { useMemo, useState, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Banner, Button, Card, Checkbox, Col, Descriptions, Dropdown, Empty, Form, Layout as SemiLayout, LocaleProvider, Nav,
-  RadioGroup, Radio, Row, Select, Space, Table, TextArea, Toast, Typography,
+  Banner, Button, Card, Checkbox, CheckboxGroup, Col, Descriptions, Dropdown, Empty, Form, Layout as SemiLayout, LocaleProvider, Nav,
+  Input, RadioGroup, Radio, Row, Select, Space, Table, Tag, TextArea, Toast, Typography,
 } from '@douyinfe/semi-ui-19';
 import ja_JP from '@douyinfe/semi-ui-19/lib/es/locale/source/ja_JP';
-import { IconChevronDown, IconClock, IconCode, IconCopy, IconLink } from '@douyinfe/semi-icons';
+import { IconChevronDown, IconClock, IconCode, IconCopy, IconFont, IconGridView, IconKey, IconLink, IconRefresh2, IconSearch } from '@douyinfe/semi-icons';
 import {
-  SAMPLES, TOOLS, UIS, convertDatetime, convertJson, copy, currentTool, decodeUrl, encodeUrl, href, parseUrl, timeZones,
-  useToolState, type Result,
+  convertBase64, countText, decodeJwt, defaultTimeZone, JWT_STATUS, DELIMITERS, PREVIEW_ROWS, REGEX_FLAGS, REGEX_SAMPLE_PATTERN, SAMPLES, TOOLS, UIS, convertCsv, convertDatetime, convertJson, copy,
+  currentTool, decodeUrl, encodeUrl, gridRows, groupsText, href, parseUrl, testRegex, timeZones, toggleFlag, useToolState,
+  type Result,
 } from '../shared/app.ts';
+import { Highlight } from '../shared/Highlight.tsx';
 
 const tool = currentTool();
-const ICONS = { json: <IconCode />, datetime: <IconClock />, url: <IconLink /> };
+const ICONS = { json: <IconCode />, datetime: <IconClock />, url: <IconLink />, regex: <IconSearch />, csv: <IconGridView />, jwt: <IconKey />, base64: <IconRefresh2 />, count: <IconFont /> };
 const { Title, Text } = Typography;
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'; // Semi に等幅フォントのトークンはない
 
@@ -59,7 +61,7 @@ function App() {
             <Title heading={3}>{tool.label}</Title>
             <Text type="tertiary">{tool.description}</Text>
             <div style={{ marginTop: 24 }}>
-              {tool.id === 'json' ? <JsonTool /> : tool.id === 'datetime' ? <DatetimeTool /> : <UrlTool />}
+              {{ json: <JsonTool />, datetime: <DatetimeTool />, url: <UrlTool />, regex: <RegexTool />, csv: <CsvTool />, jwt: <JwtTool />, base64: <Base64Tool />, count: <CountTool /> }[tool.id]}
             </div>
           </SemiLayout.Content>
         </SemiLayout>
@@ -73,8 +75,8 @@ async function copyWithToast(text: string) {
   else Toast.error('コピーできませんでした');
 }
 
-function Layout({ sample, input, onInput, placeholder, settings, result, copyText }: {
-  sample: string;
+function Layout({ onSample, input, onInput, placeholder, settings, result, copyText }: {
+  onSample: () => void;
   input: string;
   onInput: (v: string) => void;
   placeholder: string;
@@ -87,7 +89,7 @@ function Layout({ sample, input, onInput, placeholder, settings, result, copyTex
       <Col xs={24} lg={12}>
         <Card title="入力" headerExtraContent={
           <Space>
-            <Button onClick={() => onInput(sample)}>サンプル</Button>
+            <Button onClick={() => onSample()}>サンプル</Button>
             <Button onClick={() => onInput('')} disabled={!input}>クリア</Button>
           </Space>
         }>
@@ -139,7 +141,7 @@ function JsonTool() {
   const r = s.input.trim() ? convertJson(s.input, s) : null;
   return (
     <Layout
-      sample={SAMPLES.json(s)} input={s.input} onInput={(input) => set({ input })} placeholder='{"key": "value"}'
+      onSample={() => set({ input: SAMPLES.json(s) })} input={s.input} onInput={(input) => set({ input })} placeholder='{"key": "value"}'
       copyText={r?.ok ? r.value : undefined}
       result={r && (r.ok ? { ok: true, value: <Pre>{r.value}</Pre> } : r)}
       settings={
@@ -162,7 +164,7 @@ function DatetimeTool() {
   const pair = (key: string, value: string) => ({ key, value: <Text copyable={{ successTip: 'コピーしました' }} style={{ fontFamily: MONO }}>{value}</Text> });
   return (
     <Layout
-      sample={SAMPLES.datetime(s)} input={s.input} onInput={(input) => set({ input })} placeholder="1790000000 または 2026-10-08 12:34:56"
+      onSample={() => set({ input: SAMPLES.datetime(s) })} input={s.input} onInput={(input) => set({ input })} placeholder="1790000000 または 2026-10-08 12:34:56"
       result={r && (r.ok ? {
         ok: true,
         value: (
@@ -221,7 +223,7 @@ function UrlTool() {
     : coded && (coded.ok ? { ok: true, value: <Pre>{coded.value}</Pre> } : coded);
   return (
     <Layout
-      sample={SAMPLES.url(s)} input={s.input} onInput={(input) => set({ input })} placeholder="https://example.com/path?q=1"
+      onSample={() => set({ input: SAMPLES.url(s) })} input={s.input} onInput={(input) => set({ input })} placeholder="https://example.com/path?q=1"
       copyText={coded?.ok ? coded.value : undefined}
       result={result}
       settings={
@@ -233,6 +235,166 @@ function UrlTool() {
           )}
         </>
       }
+    />
+  );
+}
+
+function RegexTool() {
+  const [s, set] = useToolState('regex');
+  const r = s.input && s.pattern ? testRegex(s.input, s) : null;
+  return (
+    <Layout
+      onSample={() => set({ input: SAMPLES.regex(s), pattern: REGEX_SAMPLE_PATTERN })}
+      input={s.input} onInput={(input) => set({ input })} placeholder="照合する文字列"
+      result={r && (r.ok ? {
+        ok: true,
+        value: (
+          <>
+            <Highlight segments={r.value.segments}
+              style={{ fontFamily: MONO, fontSize: 13, padding: 12, background: 'var(--semi-color-fill-0)', borderRadius: 'var(--semi-border-radius-medium)' }}
+              markStyle={{ background: 'var(--semi-color-warning-light-active)', color: 'inherit' }} />
+            <Title heading={6} style={{ margin: '16px 0 8px' }}>一致（{r.value.matches.length}{r.value.truncated ? '+' : ''}）</Title>
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="n"
+              scroll={{ x: 'max-content' }}
+              dataSource={r.value.matches.map((m, i) => ({ n: i + 1, ...m }))}
+              columns={[
+                { title: '#', dataIndex: 'n', width: 48 },
+                { title: '位置', dataIndex: 'index', width: 64 },
+                { title: '一致した文字列', dataIndex: 'text', render: (v: string) => <Text style={{ fontFamily: MONO }}>{v || '（空）'}</Text> },
+                { title: 'グループ', dataIndex: 'groups', render: (g: Parameters<typeof groupsText>[0]) => groupsText(g) || '-' },
+              ]}
+              empty="一致する箇所はありません"
+            />
+          </>
+        ),
+      } : r)}
+      settings={
+        <>
+          <Form.Label text="正規表現" name="pattern" style={{ display: 'block' }} />
+          <Input id="pattern" value={s.pattern} onChange={(pattern) => set({ pattern })} placeholder="\\d+" style={{ fontFamily: MONO }} />
+          <Text type="tertiary" size="small">/ で囲まずに書きます</Text>
+          <Form.Label text="フラグ" style={{ display: 'block', marginTop: 12 }} />
+          <CheckboxGroup direction="horizontal" value={[...s.flags]} aria-label="フラグ"
+            onChange={(v) => set({ flags: REGEX_FLAGS.map((f) => f.flag).filter((f) => v.includes(f)).join('') })}>
+            {REGEX_FLAGS.map((f) => <Checkbox key={f.flag} value={f.flag}>{f.label}</Checkbox>)}
+          </CheckboxGroup>
+        </>
+      }
+    />
+  );
+}
+
+function CsvTool() {
+  const [s, set] = useToolState('csv');
+  const r = s.input.trim() ? convertCsv(s.input, s) : null;
+  return (
+    <Layout
+      onSample={() => set({ input: SAMPLES.csv(s) })} input={s.input} onInput={(input) => set({ input })}
+      placeholder={s.mode === 'csv2json' ? 'name,age\nアリス,30' : '[{"name": "アリス", "age": 30}]'}
+      copyText={r?.ok ? r.value.text : undefined}
+      result={r && (r.ok ? {
+        ok: true,
+        value: (
+          <>
+            <Title heading={6} style={{ marginBottom: 8 }}>表（{r.value.grid.rows.length} 行）</Title>
+            {r.value.grid.rows.length > PREVIEW_ROWS && <Text type="tertiary" size="small">先頭 {PREVIEW_ROWS} 行を表示しています</Text>}
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="id"
+              dataSource={gridRows(r.value.grid.rows)}
+              columns={r.value.grid.columns.map((c, i) => ({ title: c, key: String(i), render: (_: unknown, row: { cells: string[] }) => row.cells[i] }))}
+              style={{ marginBottom: 16 }}
+            />
+            <Pre>{r.value.text}</Pre>
+          </>
+        ),
+      } : r)}
+      settings={
+        <>
+          <Space wrap align="start" spacing="loose">
+            <Segmented label="変換" value={s.mode} onChange={(mode) => set({ mode })} options={[['csv2json', 'CSV → JSON'], ['json2csv', 'JSON → CSV']]} />
+            <Segmented label="区切り文字" value={s.delimiter} onChange={(delimiter) => set({ delimiter })} options={DELIMITERS} />
+          </Space>
+          <Checkbox checked={s.header} onChange={(e) => set({ header: !!e.target.checked })}>1 行目を見出しにする</Checkbox>
+        </>
+      }
+    />
+  );
+}
+
+const JWT_TAG = { success: 'green', error: 'red', warning: 'orange', info: 'blue' } as const;
+
+function JwtTool() {
+  const [s, set] = useToolState('jwt');
+  const r = s.input.trim() ? decodeJwt(s.input, defaultTimeZone()) : null;
+  return (
+    <Layout
+      onSample={() => set({ input: SAMPLES.jwt(s) })} input={s.input} onInput={(input) => set({ input })}
+      placeholder="eyJhbGciOi…（先頭の Bearer は付けたままで構いません）"
+      copyText={r?.ok ? r.value.payload : undefined}
+      result={r && (r.ok ? {
+        ok: true,
+        value: (
+          <>
+            <Tag size="large" color={JWT_TAG[JWT_STATUS[r.value.status].tone]} style={{ marginBottom: 12 }}>{JWT_STATUS[r.value.status].label}</Tag>
+            {r.value.times.length > 0 && <Descriptions data={r.value.times.map((t) => ({ key: t.label, value: `${t.local}（${t.relative}）` }))} />}
+            <Title heading={6} style={{ margin: '12px 0 8px' }}>ヘッダー</Title>
+            <Pre>{r.value.header}</Pre>
+            <Title heading={6} style={{ margin: '12px 0 8px' }}>ペイロード</Title>
+            <Pre>{r.value.payload}</Pre>
+          </>
+        ),
+      } : r)}
+      settings={<Text type="tertiary" size="small">署名は検証しません。トークンはブラウザの外に送信されません。</Text>}
+    />
+  );
+}
+
+function Base64Tool() {
+  const [s, set] = useToolState('base64');
+  const r = s.input ? convertBase64(s.input, s) : null;
+  return (
+    <Layout
+      onSample={() => set({ input: SAMPLES.base64(s) })} input={s.input} onInput={(input) => set({ input })}
+      placeholder={s.mode === 'encode' ? 'エンコードする文字列' : 'デコードする Base64'}
+      copyText={r?.ok ? r.value : undefined}
+      result={r && (r.ok ? { ok: true, value: <Pre>{r.value}</Pre> } : r)}
+      settings={
+        <>
+          <Segmented label="操作" value={s.mode} onChange={(mode) => set({ mode })} options={[['encode', 'エンコード'], ['decode', 'デコード']]} />
+          {s.mode === 'encode' && (
+            <Checkbox checked={s.urlSafe} onChange={(e) => set({ urlSafe: !!e.target.checked })} extra="+ / を - _ に置き換え、末尾の = を省きます">
+              URL-safe
+            </Checkbox>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+function CountTool() {
+  const [s, set] = useToolState('count');
+  return (
+    <Layout
+      onSample={() => set({ input: SAMPLES.count(s) })} input={s.input} onInput={(input) => set({ input })} placeholder="数える文字列"
+      result={s.input ? {
+        ok: true,
+        value: (
+          <Descriptions
+            align="left"
+            data={countText(s.input).map((c) => ({
+              key: c.label,
+              value: <><Text strong style={{ fontSize: 18 }}>{c.value.toLocaleString()}</Text>{c.hint && <Text type="tertiary" size="small" style={{ display: 'block' }}>{c.hint}</Text>}</>,
+            }))}
+          />
+        ),
+      } : null}
+      settings={null}
     />
   );
 }
