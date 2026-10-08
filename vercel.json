@@ -1,0 +1,3 @@
+{
+  "rewrites": [{ "source": "/:ui(cloudscape|primer|semi)/:tool*", "destination": "/:ui/index.html" }]
+}
